@@ -1,6 +1,134 @@
 # git
 
+## 基本
+
+```
+工作区 → 暂存区 → 本地仓库 → 远程仓库
+```
+
+对应命令：
+
+| 操作             | 命令         |
+| ---------------- | ------------ |
+| 添加文件到暂存区 | `git add`    |
+| 提交到本地仓库   | `git commit` |
+| 推送到远程仓库   | `git push`   |
+
+```powershell
+git init # 当前文件夹下初始git
+# 关联远程仓库
+git remote add origin https://github.com/username/repo.git  # origin是远程仓库的关联名称
+git add .
+git commit -m "comments"
+```
+
+
+
+Pull Request：“把一个分支合并到另一个分支”的请求
+
+`git pull`的时候 会自动合并
+
 ## 分支操作
+
+### 查看
+
+```
+git branch
+```
+
+👉 查看本地分支（当前分支前有 `*`）
+
+```
+git branch -a
+```
+
+👉 查看**所有分支（本地 + 远程）**
+
+```
+git branch -r
+```
+
+👉 只看远程分支
+
+### 创建分支
+
+```
+git branch dev
+```
+
+👉 创建分支（但不会切换）
+
+### 切换分支
+
+```
+git checkout dev
+```
+
+### 删除分支
+
+```
+git branch -d dev
+```
+
+👉 删除本地分支（安全删除，未合并会报错）
+
+------
+
+```
+git branch -D dev
+```
+
+👉 强制删除（不管是否合并）
+
+### 重命名分支
+
+```
+git branch -m old_name new_name
+```
+
+### 合并分支（merge）
+
+```
+git merge dev
+```
+
+👉 把 `dev` 合并到当前分支
+
+### 远程分支相关
+
+`git remote -v` 查看关联的远程仓库
+
+推送分支到远程
+
+```
+git push origin dev
+```
+
+------
+
+推送并建立跟踪关系（推荐）
+
+```
+git push -u origin dev
+```
+
+👉 以后可以直接 `git push`
+
+------
+
+删除远程分支
+
+```
+git push origin --delete dev
+```
+
+------
+
+拉取远程分支
+
+```
+git pull origin dev
+```
 
 git branch -r 
 
@@ -20,31 +148,62 @@ git branch -a 查看本地和远程repo的branch
 
 ## 本地和远程仓库
 
-`git log`查看本地commit记录
+```
+git clone -b 分支名 仓库地址
+```
 
-`git reset --soft ef0d6eda9bacb6c114d0bf2f0bc4aef7b8087cc4`恢复到某一个commit
+例如：
+
+```
+git clone -b dev https://github.com/username/repo.git
+```
+
+👉 效果：
+
+- 克隆整个仓库
+- 并**自动切换到 `dev` 分支**
+
+------
+
+二、只克隆指定分支（更高效）
+
+```
+git clone -b dev --single-branch 仓库地址
+```
+
+👉 区别：
+
+- `-b dev`：指定分支
+- `--single-branch`：**只拉这个分支的历史（更快、更省空间）**
 
 ## 查看commit记录
 
 `git log origin/main`
 
-## 本地修改后pull
+`git log`查看本地commit记录
 
-编辑器是VIM	
-
-输入注释
-
-- 按下 `ESC` 键退出编辑模式。
-- 输入 `:wq`（意为 write and quit，即保存并退出）。
-- 按 `Enter` 键提交这个命令。
-
-这会保存你的注释并关闭编辑器，完成提交。
+`git reset --soft ef0d6eda9bacb6c114d0bf2f0bc4aef7b8087cc4`恢复到某一个commit
 
 ## 提高clone速度
 
 `git clone https://gitclone.com/github.com/znxlwm/pytorch-generative-model-collections.git`
 
 一时不知道怎么提高pull 速度
+
+设置代理
+
+git config --global http.proxy http://192.168.230.1:7890
+git config --global https.proxy https://192.168.230.1:7890
+
+git config --global http.proxy http://192.168.183.1:7890
+git config --global https.proxy https://192.168.183.1:7890
+
+git config --global --get http.proxy 查看设置的代理
+
+重置取消代理
+
+git config --global --unset http.proxy
+git config --global --unset https.proxy
 
 ## 其他
 
@@ -74,17 +233,3 @@ git push -u origin first-branch 发起push，项目创建者可以据此创建pu
 
 `git config --global user.name "你的用户名"``git config --global user.email "你的邮箱"`设置用户名和邮箱
 
-设置代理
-
-git config --global http.proxy http://192.168.230.1:7890
-git config --global https.proxy https://192.168.230.1:7890
-
-git config --global http.proxy http://192.168.183.1:7890
-git config --global https.proxy https://192.168.183.1:7890
-
-git config --global --get http.proxy 查看设置的代理
-
-重置取消代理
-
-git config --global --unset http.proxy
-git config --global --unset https.proxy
