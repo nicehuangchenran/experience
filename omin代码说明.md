@@ -1,10 +1,8 @@
 # 模型整体架构
 
-  该模型是 DeepFusionAVGen，基于 Qwen3-VL 的多模态生成 DiT（Diffusion
-  Transformer），支持文本驱动的视频/音频生成。推理流水线由三个主要组件构成。
+  DeepFusionAVGen， T2I (T2V,TV2V,T2IA,T2A)
 
-  ---
-  1. 文本编码器：Qwen3VLTextExtractor
+## 文本 [B, 512, 2560] \* 36 
 
   基于 Qwen3-VL-4B-Instruct，冻结参数，只做特征提取。
 
@@ -18,50 +16,23 @@
   输出: 36 x Tensor[B, 512, 2560]  (每层 hidden state)
        attention_mask: [B, 512]
 
-  ---
-  2. 生成主干：OmniFusionDiT
+## 视频 latent embed [B, L_v, 2560]
 
-  2.1 关键超参数
-
-  ┌─────────────────────┬─────────────────────────────────────┐
-  │        参数         │                 值                  │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ hidden_size         │ 2560                                │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ num_layers          │ 36                                  │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ num_attention_heads │ 32                                  │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ num_key_value_heads │ 8                                   │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ head_dim            │ 128 (rope_dim_list=[32,48,48] 之和) │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ mlp_width_ratio     │ 3.8 → intermediate = 9728           │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ cond_embed_dim      │ 256                                 │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ patch_size          │ [1, 1, 1]                           │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ image_in_channels   │ 32                                  │
-  ├─────────────────────┼─────────────────────────────────────┤
-  │ audio_in_channels   │ 20                                  │
-  └─────────────────────┴─────────────────────────────────────┘
-
-  2.2 各子模块结构与维度
-
-  Patch Embedding
-
-  img_in_image (视频):
+  img_in_image:
     输入: [B, 65, T, H, W]   # 65 = 32(video) + 32(cond) + 1(mask)
     Conv3d(65 → 2560, kernel=[1,1,1], stride=[1,1,1])
-    展平 → [B, T*H*W, 2560]    # L_v = T * H * W
+    展平 → [B, T\*H\*W, 2560]    # L_v = T * H * W
 
-  img_in_audio (音频):
+## 音频embed [B, L_a, 2560] 
+
+  img_in_audio:
     输入: [B, 20, T_a]
     Conv1d(20 → 2560, k=7, p=3) → SiLU → ConvMLP(2560, 2560*4=10240)
     输出: [B, T_a, 2560]       # L_a = T_a
 
-  条件嵌入
+## condition embed
+
+### time_step + task [B, 256]
 
   time_in (TimestepEmbedder):
     t: [B] (float, 0~1 normalized)
@@ -74,41 +45,48 @@
     → Embedding(3, 256) → Linear(256,256) → SiLU → Linear(256,256)
     → [B, 256],  加到 vec
 
+### audio or video 模态生成任务 [B, 2560] 
+
   modality_embedder (ModalityEmbedder):
     → Embedding(2, 2560)      # 0=audio, 1=video
     → [B, 2560] 广播后加到 token 上
 
-  文本特征投影 (per_layer 模式)
+## OmniFusionDiTLayer
 
-  understanding_projs: ModuleList of 36 × Linear(2560 → 2560, bias=False)
+36层，每一层输入为 [B, L_v , 2560]
+
+### concat(text,video)
+
+ understanding_projs: ModuleList of 36 × Linear(2560 → 2560, bias=False)
     每层独立: [B, 512, 2560] → [B, 512, 2560]
 
-  Fusion Layers (36 × OmniFusionDiTLayer)
+输入 hidden_states: [B, L_v + 512, 2560]
 
-  每层结构：
+### time_step + task -> shift, scale, gate [B, 2560]
 
-  OmniFusionDiTLayer (i):
-    输入 hidden_states: [B, L_v + 512, 2560]
-    vec:               [B, 256]
+mod (ModulateDiT):
+  Linear(256 → 2560*6) → chunk(6) 得到:
+  shift1, scale1, gate1, shift2, scale2, gate2  各 [B, 2560]
 
-    mod (ModulateDiT):
-      Linear(256 → 2560*6) → chunk(6) 得到:
-      shift1, scale1, gate1, shift2, scale2, gate2  各 [B, 2560]
+### layernorm and attention
 
-    -- Attention 分支 --
-    input_layernorm (RMSNorm, dim=2560)
-    modulate: * scale1 + shift1
-    self_attn (Qwen3VL GQA):
-      q_proj: Linear(2560 → 32*128 = 4096)
-      k_proj: Linear(2560 →  8*128 = 1024)
-      v_proj: Linear(2560 →  8*128 = 1024)
-      q_norm, k_norm: RMSNorm(128)
-      RoPE (rope_dim=[32,48,48], head_dim=128)
-      Flash Attention 2 (full attention, is_causal=False)
-      o_proj: Linear(4096 → 2560)
-    residual + gate1 * attn_output
+input_layernorm (RMSNorm, dim=2560)
+modulate: * scale1 + shift1
 
-    -- MLP 分支 --
+```python
+self_attn (Qwen3VL GQA):
+  q_proj: Linear(2560 → 32*128 = 4096)
+  k_proj: Linear(2560 →  8*128 = 1024)
+  v_proj: Linear(2560 →  8*128 = 1024)
+  q_norm, k_norm: RMSNorm(128)
+  RoPE (rope_dim=[32,48,48], head_dim=128)
+  Flash Attention 2 (full attention, is_causal=False)
+  o_proj: Linear(4096 → 2560)
+residual + gate1 * attn_output
+```
+
+### layernorm and MLP
+
     post_attention_layernorm (RMSNorm, dim=2560)
     modulate: * scale2 + shift2
     mlp (SwiGLU):
@@ -117,32 +95,37 @@
       down_proj: Linear(9728 → 2560)
     residual + gate2 * mlp_output
 
-    输出: [B, L_v + 512, 2560]
-    取前 L_v: gen_tokens [B, L_v, 2560]
+输出: [B, L_v + 512, 2560]
+只取视频token: [B, L_v, 2560]
 
-  Final Layers
+## video/audio embedding to latent
+
+ 输入: [B, L_v, 2560]  →  输出: [B, L_v, 32]
 
   final_layer_image:
     LayerNorm(2560, elementwise_affine=False)
     adaLN_modulation: SiLU → Linear(256 → 5120)
     linear: Linear(2560 → 32)   # patch_size=[1,1,1], out_channels=32
-    输入: [B, L_v, 2560]  →  输出: [B, L_v, 32]
-    unpatchify: [B, L_v, 32] → [B, 32, T, H, W]
+
+​    unpatchify: [B, L_v, 32] → [B, 32, T, H, W]
 
   final_layer_audio:
     同上，linear: Linear(2560 → 20)
     输入: [B, L_a, 2560]  →  输出: [B, 20, T_a]
 
-  ---
-  3. Video VAE：AutoencoderKLConv3D
+## Video VAE
 
-  HunyuanVideo 1.5 VAE，空间压缩比 16。
+  AutoencoderKLConv3D  HunyuanVideo 1.5 VAE，空间压缩比 16。
 
   decode 输入: [B, 32, T, H/16, W/16]
   decode 输出: [B, 3, T, H, W]  (float, [-1,1] → [0,1])
 
-  ---
-  # 推理数据流
+## Aduio VAE
+
+TOD-VAE BigGAN 
+
+# 推理
+
   （T2V，默认 resolution=256, video_length=1）
 
   输入: prompt (str)
@@ -162,18 +145,18 @@
       video input: cat(latents, zeros, mask): [1, 65, 1, 16, 16]
       video_tokens = img_in_image: [1, 1*16*16=256, 2560]
       + modality_embed(video): [1, 256, 2560]
-
+    
       gen_tokens = video_tokens: [1, 256, 2560]
-
+    
       for layer_i in 36:
           text_tokens = understanding_projs[i](cond_emb[i]): [1, 512, 2560]
           hidden = cat([gen_tokens, text_tokens]): [1, 768, 2560]
           hidden = OmniFusionDiTLayer(hidden, vec, RoPE, mask)
           gen_tokens = hidden[:, :256, :]: [1, 256, 2560]
-
+    
       video_tok = final_layer_image(gen_tokens, vec): [1, 256, 32]
       pred_noise = unpatchify: [1, 32, 1, 16, 16]
-
+    
       latents = scheduler.step(pred_noise, t, latents)
 
   Step 4 - VAE 解码
@@ -181,7 +164,7 @@
     → AutoencoderKLConv3D.decode
     → video_frames: [1, 3, 1, 256, 256]  → PNG 图片
 
-  ---
+---
   注意事项
 
   - CFG (guidance_scale=3.5) 时每步做两次前向（uncond + cond），使用 guidance_scale * (cond - uncond) 组合
@@ -250,7 +233,7 @@
 以下用默认推理参数（B=1, resolution=256, video_length=1, num_inference_steps=30）展示完整数据流。VAE 空间压缩 16 倍，所以 latent 空间
   H=W=16。
                                                                                                                                                
-  ---
+---
   阶段一：文本编码（Qwen3VLTextExtractor，执行一次）                                                                                           
                                                                                                                                              
   输入                                                                                                                                         
@@ -269,14 +252,14 @@
   36 × [B, 512, 2560]   qwen_features   (每层一个张量)
        [B, 512]          qwen_mask
 
-  ---
+---
   阶段二：初始化噪声（执行一次）
 
   随机采样
 
   [B, 32, 1, 16, 16]   latents     (C=32, T=1, H=16, W=16)
 
-  ---
+---
   阶段三：扩散采样循环（重复 30 步）
 
   每步执行一次 OmniFusionDiT forward（CFG 时执行两次，uncond + cond）。
@@ -452,7 +435,7 @@
        ▼  FlowMatchEulerDiscreteScheduler.step
   [B, 32, 1, 16, 16]   latents (更新后，进入下一步)
 
-  ---
+---
   阶段四：VAE 解码（执行一次）
 
   [B, 32, 1, 16, 16]   latents (采样完成)
@@ -467,16 +450,20 @@
        ▼  einops: [C,T,H,W] → [T,H,W,C]
   [1, 256, 256, 3]     输出图片（video_length=1 保存为 PNG）
 
-
 # 训练
-  训练时各任务的赋值                                                                             
 
-  # train_qwen3vl_fusion.py（纯图像训练）
+## 代码入口
+
+**train_qwen3vl_fusion.py（纯图像训练）**
+
   task_ids = torch.zeros(B, dtype=torch.long)      # 全 0，TASK_VIDEO
 
-  # train_qwen3vl_mixed.py（混合训练）
-  # 图像 batch
+**train_qwen3vl_mixed.py（混合训练）**
+
+图像 batch
+
   task_ids = torch.zeros(B, dtype=torch.long)      # TASK_VIDEO = 0
 
-  # 音频 batch
+音频 batch
+
   task_ids = torch.ones(B, dtype=torch.long)       # TASK_AUDIO = 1
