@@ -1,3 +1,9 @@
+# 模型入口
+
+下列文件在DeepFusionAVGen目录
+
+scripts/run_t2v_infer.sh ：推理
+
 # 模型整体架构
 
   DeepFusionAVGen， T2I (T2V,TV2V,T2IA,T2A)
@@ -492,7 +498,7 @@ TOD-VAE BigGAN
     - 经过 accelerator.prepare() 包装为 DDP/DeepSpeed
     - 默认 bf16 混合精度
 
-  ---
+---
   二、数据流水线
 
   图像数据（MultiModalMapDataset）
@@ -530,7 +536,7 @@ TOD-VAE BigGAN
   rng = random.Random(seed + global_step * 31337)
   use_image = rng.random() < image_prob   # 默认 image_prob=0.9
 
-  ---
+---
   三、单步训练流程（以图像为例）
 
   Step 1：VAE 编码（@no_grad）
@@ -603,7 +609,7 @@ TOD-VAE BigGAN
   lr_scheduler.step()   # constant_with_warmup, warmup=500步
   optimizer.zero_grad()
 
-  ---
+---
   四、音频分支差异（混合训练）
 
   target_waveforms: [B, 1, T_samples]
@@ -622,7 +628,7 @@ TOD-VAE BigGAN
   #   - task_ids = TASK_AUDIO (=1)
   #   - target = noise - audio_latents
 
-  ---
+---
   五、训练配置总结
 
   ┌──────────────┬───────────────────────────────────────────────────────┐

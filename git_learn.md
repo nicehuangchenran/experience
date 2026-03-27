@@ -1,5 +1,15 @@
 # git
 
+## 正在用
+
+```
+git checkout -- omin代码说明.md
+```
+
+本质作用是：
+
+> **把这个文件恢复成“最后一次 commit 时的状态”，并丢弃你所有本地修改**
+
 ## 基本
 
 ```
@@ -21,8 +31,6 @@ git remote add origin https://github.com/username/repo.git  # origin是远程仓
 git add .
 git commit -m "comments"
 ```
-
-
 
 Pull Request：“把一个分支合并到另一个分支”的请求
 
@@ -232,4 +240,6 @@ git push -u origin first-branch 发起push，项目创建者可以据此创建pu
 `git push origin -u  hcr --verbose`可以输出更多信息，在没有反应的时候使用
 
 `git config --global user.name "你的用户名"``git config --global user.email "你的邮箱"`设置用户名和邮箱
+
+
 
